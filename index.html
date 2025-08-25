@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI生成导览手绘图</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        #map { height: 70vh; width: 100%; }
+        .controls { padding: 20px; background: #f5f5f5; }
+        .btn { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .btn:hover { background: #0056b3; }
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .status { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .status.processing { background: #fff3cd; border: 1px solid #ffeaa7; }
+        .status.complete { background: #d4edda; border: 1px solid #c3e6cb; }
+        .status.error { background: #f8d7da; border: 1px solid #f5c6cb; }
+        #result { margin-top: 20px; }
+        #result img { max-width: 100%; border: 1px solid #ddd; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="controls">
+        <h2>AI生成导览手绘图</h2>
+        <p>在地图上点击选择区域，然后点击生成按钮</p>
+        <button id="generateBtn" class="btn">生成手绘地图</button>
+        <button id="clearBtn" class="btn">清除选择</button>
+        <div id="status"></div>
+        <div id="result"></div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // 初始化地图
+        const map = L.map('map').setView([39.9042, 116.4074], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let selectedArea = null;
+        let currentJob = null;
+
+        // 地图点击事件
+        map.on('click', function(e) {
+            if (!selectedArea) {
+                // 创建一个简单的矩形选择区域
+                const bounds = L.latLngBounds(
+                    [e.latlng.lat - 0.01, e.latlng.lng - 0.01],
+                    [e.latlng.lat + 0.01, e.latlng.lng + 0.01]
+                );
+                selectedArea = L.rectangle(bounds, {color: "#ff7800", weight: 2}).addTo(map);
+                updateStatus('已选择区域，点击生成按钮开始生成', 'info');
+            }
+        });
+
+        // 清除选择
+        document.getElementById('clearBtn').addEventListener('click', function() {
+            if (selectedArea) {
+                map.removeLayer(selectedArea);
+                selectedArea = null;
+                updateStatus('已清除选择', 'info');
+            }
+        });
+
+        // 生成按钮
+        document.getElementById('generateBtn').addEventListener('click', async function() {
+            if (!selectedArea) {
+                updateStatus('请先在地图上选择一个区域', 'error');
+                return;
+            }
+
+            const bounds = selectedArea.getBounds();
+            const coordinates = [
+                {lat: bounds.getNorthWest().lat, lng: bounds.getNorthWest().lng},
+                {lat: bounds.getNorthEast().lat, lng: bounds.getNorthEast().lng},
+                {lat: bounds.getSouthEast().lat, lng: bounds.getSouthEast().lng},
+                {lat: bounds.getSouthWest().lat, lng: bounds.getSouthWest().lng}
+            ];
+
+            try {
+                updateStatus('正在启动生成任务...', 'processing');
+                this.disabled = true;
+
+                const response = await fetch('/api/start_generation', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({coordinates: coordinates})
+                });
+
+                const result = await response.json();
+                currentJob = result.job_id;
+                
+                updateStatus('生成任务已启动，正在处理中...', 'processing');
+                checkJobStatus();
+
+            } catch (error) {
+                updateStatus('启动任务失败: ' + error.message, 'error');
+                this.disabled = false;
+            }
+        });
+
+        // 检查任务状态
+        async function checkJobStatus() {
+            if (!currentJob) return;
+
+            try {
+                const response = await fetch(`/api/job_status/${currentJob}`);
+                const status = await response.json();
+
+                if (status.status === 'processing') {
+                    updateStatus('正在生成中，请稍候...', 'processing');
+                    setTimeout(checkJobStatus, 3000);
+                } else if (status.status === 'complete') {
+                    updateStatus('生成完成！', 'complete');
+                    displayResult(status.result.image_base64);
+                    document.getElementById('generateBtn').disabled = false;
+                } else if (status.status === 'failed') {
+                    updateStatus('生成失败: ' + status.error, 'error');
+                    document.getElementById('generateBtn').disabled = false;
+                } else {
+                    updateStatus('任务状态未知', 'error');
+                    document.getElementById('generateBtn').disabled = false;
+                }
+            } catch (error) {
+                updateStatus('检查状态失败: ' + error.message, 'error');
+                document.getElementById('generateBtn').disabled = false;
+            }
+        }
+
+        // 更新状态显示
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+        }
+
+        // 显示结果
+        function displayResult(imageBase64) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <h3>生成的手绘地图：</h3>
+                <img src="data:image/png;base64,${imageBase64}" alt="生成的手绘地图" />
+                <p><small>CPU模式生成，确保稳定输出</small></p>
+            `;
+        }
+
+        // 初始状态
+        updateStatus('请在地图上点击选择一个区域', 'info');
+    </script>
+</body>
+</html>

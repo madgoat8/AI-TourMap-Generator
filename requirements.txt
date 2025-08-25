@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+requests
+Pillow
+numpy
+shapely
+torch
+diffusers[torch]
+transformers
+accelerate
+opencv-python-headless
