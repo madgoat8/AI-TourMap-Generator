@@ -150,6 +150,11 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
+        // Prevent map events from firing on the overlay controls toolbar
+        const overlayControls = L.DomUtil.get('overlay-controls');
+        L.DomEvent.disableClickPropagation(overlayControls);
+        L.DomEvent.disableScrollPropagation(overlayControls);
+
         let selectedArea = null;
         let currentJob = null;
         let isDrawing = false;
