@@ -6,34 +6,145 @@
     <title>AI生成导览手绘图</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; font-family: Arial, sans-serif; }
-        #map { height: 70vh; width: 100%; }
-        .controls { padding: 20px; background: #f5f5f5; }
-        .btn { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        html, body {
+            height: 100%;
+            margin: 0;
+            font-family: Arial, sans-serif;
+            overflow: hidden; /* Prevent body scrollbars */
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+        #map {
+            flex-grow: 1; /* Map takes up all available space */
+            width: 100%;
+            position: relative;
+        }
+        
+        /* --- Compact Controls Layout --- */
+        .controls {
+            flex-shrink: 0; /* Don't shrink the controls panel */
+            padding: 15px 20px;
+            background: #f5f5f5;
+            overflow-y: auto; /* Add scroll if controls overflow */
+            max-height: 35vh; /* Optional: prevent controls from being too tall */
+        }
+        .controls h2 {
+            margin: 0 0 5px 0;
+            font-size: 1.2em;
+        }
+        .controls p {
+            margin: 0 0 15px 0;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .btn {
+            padding: 8px 16px;
+            margin: 0;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
         .btn:hover { background: #0056b3; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
-        .status { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        
+        .status {
+            margin: 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
         .status.processing { background: #fff3cd; border: 1px solid #ffeaa7; }
         .status.complete { background: #d4edda; border: 1px solid #c3e6cb; }
         .status.error { background: #f8d7da; border: 1px solid #f5c6cb; }
-        #result { margin-top: 20px; }
+        
+        #result { margin-top: 15px; }
         #result img { max-width: 100%; border: 1px solid #ddd; border-radius: 5px; }
+        
+        .mouse-coords {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: monospace;
+        }
+        
+        .map-overlay {
+            position: absolute;
+            pointer-events: none;
+            z-index: 500;
+        }
+
+        .control-group { margin-bottom: 10px; }
+        .control-group label { display: block; font-size: 12px; margin-bottom: 5px; }
+        .control-group input[type="range"] { width: 100%; }
+        .control-group input[type="checkbox"] { margin-right: 5px; }
+        .opacity-value { font-size: 11px; color: #666; }
+
+        .floating-toolbar {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            min-width: 200px;
+        }
+        .floating-toolbar h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
-    <div id="map"></div>
+    <div id="map">
+        <div class="mouse-coords" id="mouseCoords">
+            坐标: 0.0000, 0.0000
+        </div>
+        <div id="overlay-controls" class="floating-toolbar" style="display: none;">
+            <h4>手绘图控制</h4>
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="showOverlay" checked> 显示手绘图
+                </label>
+            </div>
+            <div class="control-group">
+                <label for="opacitySlider">透明度: <span class="opacity-value" id="opacityValue">80%</span></label>
+                <input type="range" id="opacitySlider" min="0" max="100" value="80">
+            </div>
+        </div>
+    </div>
     <div class="controls">
         <h2>AI生成导览手绘图</h2>
-        <p>在地图上点击选择区域，然后点击生成按钮</p>
-        <button id="generateBtn" class="btn">生成手绘地图</button>
-        <button id="clearBtn" class="btn">清除选择</button>
+        <p>点击“选择区域”按钮，然后在地图上拖拽以选择区域</p>
+        <div class="button-group">
+            <button id="selectAreaBtn" class="btn">选择区域</button>
+            <button id="generateBtn" class="btn">生成手绘地图</button>
+            <button id="clearBtn" class="btn">清除选择</button>
+        </div>
         <div id="status"></div>
         <div id="result"></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 初始化地图
+        // The script content remains the same as the last successful update
         const map = L.map('map').setView([39.9042, 116.4074], 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
@@ -41,36 +152,111 @@
 
         let selectedArea = null;
         let currentJob = null;
+        let isDrawing = false;
+        let startPoint = null;
+        let currentRectangle = null;
+        let overlayImage = null;
+        let isSelectingArea = false;
 
-        // 地图点击事件
-        map.on('click', function(e) {
-            if (!selectedArea) {
-                // 创建一个简单的矩形选择区域
-                const bounds = L.latLngBounds(
-                    [e.latlng.lat - 0.01, e.latlng.lng - 0.01],
-                    [e.latlng.lat + 0.01, e.latlng.lng + 0.01]
-                );
-                selectedArea = L.rectangle(bounds, {color: "#ff7800", weight: 2}).addTo(map);
-                updateStatus('已选择区域，点击生成按钮开始生成', 'info');
-            }
+        map.on('mousemove', function(e) {
+            const coords = document.getElementById('mouseCoords');
+            coords.textContent = '坐标: ' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4);
         });
 
-        // 清除选择
+        document.getElementById('selectAreaBtn').addEventListener('click', function() {
+            isSelectingArea = true;
+            map.getContainer().style.cursor = 'crosshair';
+            updateStatus('请在地图上拖拽以选择区域', 'info');
+        });
+
         document.getElementById('clearBtn').addEventListener('click', function() {
-            if (selectedArea) {
-                map.removeLayer(selectedArea);
+            clearDrawing();
+        });
+
+        function clearDrawing() {
+            if (selectedArea) map.removeLayer(selectedArea);
+            selectedArea = null;
+            if (currentRectangle) map.removeLayer(currentRectangle);
+            currentRectangle = null;
+            if (overlayImage) map.removeLayer(overlayImage);
+            overlayImage = null;
+            map.getContainer().style.cursor = '';
+            if(isDrawing) {
+                map.dragging.enable();
+                isDrawing = false;
+            }
+            isSelectingArea = false;
+            startPoint = null;
+            updateStatus('已清除所有绘制内容', 'info');
+            const overlayControls = document.getElementById('overlay-controls');
+            if (overlayControls) {
+                overlayControls.style.display = 'none';
+                document.getElementById('showOverlay').checked = true;
+                document.getElementById('opacitySlider').value = 80;
+                document.getElementById('opacityValue').textContent = '80%';
+            }
+        }
+
+        map.on('mousedown', function(e) {
+            if (isSelectingArea) {
+                if (isDrawing) return;
+                isDrawing = true;
+                startPoint = e.latlng;
+                if (selectedArea) map.removeLayer(selectedArea);
                 selectedArea = null;
-                updateStatus('已清除选择', 'info');
+                map.dragging.disable();
+                e.originalEvent.preventDefault();
             }
         });
 
-        // 生成按钮
+        map.on('mousemove', function(e) {
+            if (isDrawing && startPoint) {
+                if (currentRectangle) map.removeLayer(currentRectangle);
+                const bounds = L.latLngBounds(startPoint, e.latlng);
+                currentRectangle = L.rectangle(bounds, { color: "#ff7800", weight: 2, fillOpacity: 0.1 }).addTo(map);
+            }
+        });
+
+        map.on('mouseup', function(e) {
+            if (isDrawing) {
+                isDrawing = false;
+                isSelectingArea = false;
+                map.getContainer().style.cursor = '';
+                map.dragging.enable();
+                if (currentRectangle) {
+                    const bounds = currentRectangle.getBounds();
+                    if (bounds.getSouthWest().distanceTo(bounds.getNorthEast()) < 20) {
+                        map.removeLayer(currentRectangle);
+                        updateStatus('选择已取消。请拖拽以绘制一个有效的矩形。', 'info');
+                    } else {
+                        selectedArea = currentRectangle;
+                        updateStatus('已选择矩形区域，点击生成按钮开始生成', 'info');
+                    }
+                    currentRectangle = null;
+                }
+                startPoint = null;
+            }
+        });
+
+        document.getElementById('showOverlay').addEventListener('change', function() {
+            if (overlayImage) {
+                overlayImage.setOpacity(this.checked ? document.getElementById('opacitySlider').value / 100 : 0);
+            }
+        });
+
+        document.getElementById('opacitySlider').addEventListener('input', function() {
+            const opacity = this.value / 100;
+            document.getElementById('opacityValue').textContent = this.value + '%';
+            if (overlayImage && document.getElementById('showOverlay').checked) {
+                overlayImage.setOpacity(opacity);
+            }
+        });
+
         document.getElementById('generateBtn').addEventListener('click', async function() {
             if (!selectedArea) {
                 updateStatus('请先在地图上选择一个区域', 'error');
                 return;
             }
-
             const bounds = selectedArea.getBounds();
             const coordinates = [
                 {lat: bounds.getNorthWest().lat, lng: bounds.getNorthWest().lng},
@@ -78,37 +264,29 @@
                 {lat: bounds.getSouthEast().lat, lng: bounds.getSouthEast().lng},
                 {lat: bounds.getSouthWest().lat, lng: bounds.getSouthWest().lng}
             ];
-
             try {
                 updateStatus('正在启动生成任务...', 'processing');
                 this.disabled = true;
-
                 const response = await fetch('/api/start_generation', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({coordinates: coordinates})
                 });
-
                 const result = await response.json();
                 currentJob = result.job_id;
-                
                 updateStatus('生成任务已启动，正在处理中...', 'processing');
                 checkJobStatus();
-
             } catch (error) {
                 updateStatus('启动任务失败: ' + error.message, 'error');
                 this.disabled = false;
             }
         });
 
-        // 检查任务状态
         async function checkJobStatus() {
             if (!currentJob) return;
-
             try {
-                const response = await fetch(`/api/job_status/${currentJob}`);
+                const response = await fetch('/api/job_status/' + currentJob);
                 const status = await response.json();
-
                 if (status.status === 'processing') {
                     updateStatus('正在生成中，请稍候...', 'processing');
                     setTimeout(checkJobStatus, 3000);
@@ -129,25 +307,28 @@
             }
         }
 
-        // 更新状态显示
         function updateStatus(message, type) {
             const statusDiv = document.getElementById('status');
             statusDiv.textContent = message;
             statusDiv.className = 'status ' + type;
         }
 
-        // 显示结果
         function displayResult(imageBase64) {
             const resultDiv = document.getElementById('result');
-            resultDiv.innerHTML = `
-                <h3>生成的手绘地图：</h3>
-                <img src="data:image/png;base64,${imageBase64}" alt="生成的手绘地图" />
-                <p><small>CPU模式生成，确保稳定输出</small></p>
-            `;
+            resultDiv.innerHTML = '';
+            if (selectedArea && imageBase64) {
+                const bounds = selectedArea.getBounds();
+                const imageUrl = 'data:image/png;base64,' + imageBase64;
+                if (overlayImage) map.removeLayer(overlayImage);
+                overlayImage = L.imageOverlay(imageUrl, bounds, {
+                    opacity: document.getElementById('opacitySlider').value / 100,
+                    interactive: false
+                }).addTo(map);
+                document.getElementById('overlay-controls').style.display = 'block';
+            }
         }
 
-        // 初始状态
-        updateStatus('请在地图上点击选择一个区域', 'info');
+        updateStatus('点击“选择区域”按钮，然后在地图上拖拽以选择区域', 'info');
     </script>
 </body>
 </html>
