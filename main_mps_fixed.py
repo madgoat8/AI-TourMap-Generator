@@ -86,6 +86,17 @@ pipe = StableDiffusionControlNetPipeline.from_pretrained(
 
 logger.info("AI模型加载成功。")
 
+# 加载IP-Adapter模型用于风格迁移
+logger.info("加载IP-Adapter模型...")
+# 修正：使用正确的image_encoder_path参数，并指向正确的模型库
+pipe.load_ip_adapter(
+    "h94/IP-Adapter", 
+    subfolder="models", 
+    weight_name="ip-adapter_sd15.bin",
+    image_encoder_path="laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+)
+logger.info("IP-Adapter加载成功。")
+
 # --- Helper Functions ---
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 IMAGE_WIDTH = 512
@@ -184,29 +195,53 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
         control_image_canny = Image.fromarray(canny_image).convert("RGB")
         control_image_canny.save(os.path.join(run_dir, "control_canny.png"))
         
-        # 应用优化后的提示词和参数
-        prompt = "A beautiful illustrated map of a forest park, scenic aerial view, digital painting, game art style, lush greens, glowing water, soft shadows and highlights, masterpiece, highly detailed, in the style of Genshin Impact map."
-        negative_prompt = "photograph, realistic, blurry, noisy, low quality, flat colors, vector art, ugly, boring, text, words"
+        # 加载固定的风格参考图
+        logger.info(f"[Job {job_id}] 加载风格参考图 demo1.png...")
+        try:
+            style_image = Image.open("demo1.png").convert("RGB")
+        except FileNotFoundError:
+            logger.error(f"[Job {job_id}] 风格参考图 demo1.png 未找到！")
+            raise ValueError("风格参考图 demo1.png 未找到！")
+
+        # 当使用IP-Adapter时，提示词可以更侧重于内容而非风格
+        prompt = "A beautiful and clear map of a park, aerial view, roads, buildings, trees, and water, masterpiece, best quality"
+        negative_prompt = "blurry, low quality, distorted, text, words, letters, ugly, boring, plain"
         
-        logger.info(f"[Job {job_id}] 开始AI生成 (最终配置)...")
+        logger.info(f"[Job {job_id}] 开始AI生成 (IP-Adapter + ControlNet)...")
         
+        # 设置IP-Adapter的风格强度
+        pipe.set_ip_adapter_scale(0.7)
+
         if device == "mps":
             torch.mps.empty_cache()
         
         generator = torch.Generator(device=device).manual_seed(1337)
         
         with torch.no_grad():
-            output = pipe(
+            # 1. 让pipeline直接输出numpy数组，而不是PIL Image
+            output_images = pipe(
                 prompt=prompt,
                 negative_prompt=negative_prompt,
-                image=control_image_canny,
-                num_inference_steps=25,
-                controlnet_conditioning_scale=0.6,  # 给予更多艺术创作空间
-                guidance_scale=8.0,
-                generator=generator
-            )
+                image=control_image_canny, # ControlNet的结构图
+                ip_adapter_image=style_image, # IP-Adapter的风格图
+                num_inference_steps=30,
+                controlnet_conditioning_scale=0.6,
+                guidance_scale=7.5,
+                generator=generator,
+                output_type="np"  # <-- 关键改动
+            ).images
         
-        final_image = output.images[0]
+        # 2. 数据清洗：检查并修复NaN值
+        raw_image_np = output_images[0]
+        if np.any(np.isnan(raw_image_np)):
+            logger.warning(f"[Job {job_id}] 检测到NaN值，正在进行修复...")
+            # 将NaN替换为0.5（中性灰色），避免产生黑点
+            raw_image_np = np.nan_to_num(raw_image_np, nan=0.5)
+
+        # 3. 将清洗后的numpy数组转换为PIL Image
+        final_image_np = (raw_image_np * 255).round().astype(np.uint8)
+        final_image = Image.fromarray(final_image_np)
+
         final_image.save(os.path.join(run_dir, "final_map.png"))
         
         final_array = np.array(final_image)

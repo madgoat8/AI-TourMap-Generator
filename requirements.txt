@@ -10,3 +10,4 @@ transformers
 accelerate
 opencv-python-headless
 controlnet-aux
+ip-adapter
