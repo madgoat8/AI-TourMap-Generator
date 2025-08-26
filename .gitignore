@@ -43,6 +43,7 @@ logs/
 # AI Models and Cache
 model_cache/
 debug_runs/
+output/
 
 # Local configuration
 config.local
