@@ -146,9 +146,26 @@
     <script>
         // The script content remains the same as the last successful update
         const map = L.map('map').setView([39.9042, 116.4074], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+
+        // Define base layers
+        const standardMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
-        }).addTo(map);
+        });
+
+        const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+        });
+
+        // Set satellite map as default
+        satelliteMap.addTo(map);
+
+        // Create layer control
+        const baseLayers = {
+            "卫星影像": satelliteMap,
+            "标准地图": standardMap
+        };
+
+        L.control.layers(baseLayers, null, { collapsed: false }).addTo(map);
 
         // Prevent map events from firing on the overlay controls toolbar
         const overlayControls = L.DomUtil.get('overlay-controls');
