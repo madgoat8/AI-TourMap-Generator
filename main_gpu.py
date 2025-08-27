@@ -12,6 +12,7 @@ import cv2
 import os
 import uuid
 import base64
+import json
 from io import BytesIO
 import webbrowser
 import logging
@@ -51,6 +52,7 @@ HAS_OPENED_BROWSER = False
 # --- Pydantic Models ---
 class AreaSelection(BaseModel):
     coordinates: List[GeoCoordinate]
+    screenshot_base64: str = None  # 可选的原始截图
 
 # --- FastAPI App with Lifespan ---
 @asynccontextmanager
@@ -99,38 +101,145 @@ osm_client = OSMClient()
 semantic_generator = SemanticMapGenerator()
 canny_processor = CannyProcessor()
 
+# --- 调试辅助函数 ---
+def save_debug_info(run_dir: str, step_name: str, data, data_type: str = "json"):
+    """保存调试信息的通用函数"""
+    try:
+        if data_type == "json":
+            with open(os.path.join(run_dir, f"{step_name}.json"), "w", encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        elif data_type == "image":
+            if hasattr(data, 'save'):
+                data.save(os.path.join(run_dir, f"{step_name}.png"))
+        elif data_type == "text":
+            with open(os.path.join(run_dir, f"{step_name}.txt"), "w", encoding='utf-8') as f:
+                f.write(str(data))
+        logger.info(f"调试信息已保存: {step_name}")
+    except Exception as e:
+        logger.error(f"保存调试信息失败 {step_name}: {e}")
+
+def create_process_comparison(semantic_image: Image.Image, canny_image: Image.Image, final_image: Image.Image, run_dir: str, original_screenshot: Image.Image = None):
+    """生成处理流程对比图"""
+    try:
+        # 确保所有图像尺寸一致
+        target_size = (400, 400)  # 稍微缩小以容纳更多图像
+        semantic_resized = semantic_image.resize(target_size, Image.Resampling.LANCZOS)
+        canny_resized = canny_image.resize(target_size, Image.Resampling.LANCZOS)
+        final_resized = final_image.resize(target_size, Image.Resampling.LANCZOS)
+        
+        # 检查是否有原始截图
+        if original_screenshot:
+            original_resized = original_screenshot.resize(target_size, Image.Resampling.LANCZOS)
+            # 创建四联对比图
+            comparison_width = target_size[0] * 4 + 50  # 添加间隔
+            comparison_height = target_size[1] + 60  # 添加标题空间
+            
+            comparison = Image.new('RGB', (comparison_width, comparison_height), color='white')
+            
+            # 添加标题
+            from PIL import ImageFont, ImageDraw
+            draw = ImageDraw.Draw(comparison)
+            try:
+                font = ImageFont.truetype("arial.ttf", 14)
+            except:
+                font = ImageFont.load_default()
+            
+            draw.text((10, 10), "原始截图", fill='black', font=font)
+            draw.text((target_size[0] + 25, 10), "语义地图", fill='black', font=font)
+            draw.text((target_size[0] * 2 + 35, 10), "Canny边缘", fill='black', font=font)
+            draw.text((target_size[0] * 3 + 45, 10), "AI生成结果", fill='black', font=font)
+            
+            # 粘贴图像
+            comparison.paste(original_resized, (10, 40))
+            comparison.paste(semantic_resized, (target_size[0] + 15, 40))
+            comparison.paste(canny_resized, (target_size[0] * 2 + 25, 40))
+            comparison.paste(final_resized, (target_size[0] * 3 + 35, 40))
+        else:
+            # 创建三联对比图（原有逻辑）
+            comparison_width = target_size[0] * 3 + 40  # 添加间隔
+            comparison_height = target_size[1] + 60  # 添加标题空间
+            
+            comparison = Image.new('RGB', (comparison_width, comparison_height), color='white')
+            
+            # 添加标题
+            from PIL import ImageFont, ImageDraw
+            draw = ImageDraw.Draw(comparison)
+            try:
+                font = ImageFont.truetype("arial.ttf", 16)
+            except:
+                font = ImageFont.load_default()
+            
+            draw.text((10, 10), "语义地图", fill='black', font=font)
+            draw.text((target_size[0] + 25, 10), "Canny边缘", fill='black', font=font)
+            draw.text((target_size[0] * 2 + 40, 10), "AI生成结果", fill='black', font=font)
+            
+            # 粘贴图像
+            comparison.paste(semantic_resized, (10, 40))
+            comparison.paste(canny_resized, (target_size[0] + 20, 40))
+            comparison.paste(final_resized, (target_size[0] * 2 + 30, 40))
+        
+        comparison.save(os.path.join(run_dir, "09_process_comparison.png"))
+        logger.info("处理流程对比图生成完成")
+    except Exception as e:
+        logger.error(f"生成处理流程对比图失败: {e}")
+
 # --- Background Task ---
-def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
+def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screenshot_base64: str = None):
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = os.path.join(DEBUG_DIR, f"{timestamp}_{job_id[:8]}")
     os.makedirs(run_dir, exist_ok=True)
     logger.info(f"[Job {job_id}] 开始任务 (GPU优化版本)。调试文件保存在: {run_dir}")
     
     try:
-        # 获取边界框详情
-        bbox_details = get_bounding_box_details(coordinates)
+        # 1. 保存原始截图（如果提供）
+        original_screenshot = None
+        if screenshot_base64:
+            try:
+                # 解码base64图像
+                image_data = base64.b64decode(screenshot_base64)
+                original_screenshot = Image.open(BytesIO(image_data)).convert("RGB")
+                original_screenshot.save(os.path.join(run_dir, "00_original_screenshot.png"))
+                logger.info(f"[Job {job_id}] 原始截图已保存")
+            except Exception as e:
+                logger.warning(f"[Job {job_id}] 保存原始截图失败: {e}")
         
-        # 获取OSM数据
+        # 2. 保存坐标信息
+        coords_info = {
+            "coordinates": [{"lat": c.lat, "lng": c.lng} for c in coordinates],
+            "timestamp": timestamp,
+            "job_id": job_id,
+            "description": "Web UI生成任务",
+            "has_original_screenshot": screenshot_base64 is not None
+        }
+        save_debug_info(run_dir, "01_coordinates", coords_info, "json")
+        
+        # 2. 获取边界框详情
+        bbox_details = get_bounding_box_details(coordinates)
+        save_debug_info(run_dir, "02_bbox_info", bbox_details, "json")
+        logger.info(f"[Job {job_id}] 边界框: {bbox_details['bbox_str']}")
+        
+        # 3. 获取OSM数据
         logger.info(f"[Job {job_id}] 获取OSM数据...")
         osm_data = osm_client.fetch_data(bbox_details["bbox_str"])
         
-        # 打印数据统计
+        # 4. 打印并保存数据统计
         stats = osm_client.get_statistics(osm_data)
+        save_debug_info(run_dir, "03_osm_stats", stats, "json")
         logger.info(f"[Job {job_id}] OSM数据统计: {stats}")
         
-        # 生成语义地图
+        # 5. 生成语义地图
         logger.info(f"[Job {job_id}] 生成语义地图...")
         semantic_image = semantic_generator.create_semantic_map(
-            osm_data, bbox_details, os.path.join(run_dir, "semantic_map.png")
+            osm_data, bbox_details, os.path.join(run_dir, "04_semantic_map.png")
         )
         
-        # Canny边缘检测
+        # 6. Canny边缘检测
         logger.info(f"[Job {job_id}] 进行Canny边缘检测...")
         control_image_canny = canny_processor.process_semantic_map(
-            semantic_image, os.path.join(run_dir, "control_canny.png")
+            semantic_image, os.path.join(run_dir, "05_control_canny.png")
         )
         
-        # 加载固定的风格参考图
+        # 7. 加载固定的风格参考图
         logger.info(f"[Job {job_id}] 加载风格参考图 demo1.png...")
         style_image = None
         use_ip_adapter = False
@@ -138,6 +247,8 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
         try:
             if hasattr(pipe, 'ip_adapter_available') and pipe.ip_adapter_available:
                 style_image = Image.open("demo1.png").convert("RGB")
+                # 保存风格参考图到调试目录
+                style_image.save(os.path.join(run_dir, "06_style_reference.png"))
                 use_ip_adapter = True
                 logger.info(f"[Job {job_id}] 风格参考图加载成功，将使用IP-Adapter")
             else:
@@ -149,7 +260,7 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
             logger.warning(f"[Job {job_id}] 加载风格图片失败: {e}，使用基础模式")
             use_ip_adapter = False
 
-        # 根据IP-Adapter可用性调整提示词 - 使用配置中的提示词
+        # 8. 根据IP-Adapter可用性调整提示词 - 使用配置中的提示词
         if use_ip_adapter:
             prompt = PromptConfig.PROMPT_WITH_IP_ADAPTER
             pipe.set_ip_adapter_scale(ModelConfig.IP_ADAPTER_SCALE)
@@ -160,6 +271,21 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
         
         # 使用配置中的负面提示词
         negative_prompt = PromptConfig.NEGATIVE_PROMPT
+        
+        # 9. 保存生成参数
+        generation_params_info = {
+            "prompt": prompt,
+            "negative_prompt": negative_prompt,
+            "use_ip_adapter": use_ip_adapter,
+            "device": str(device),
+            "dtype": str(dtype),
+            "inference_steps": ModelConfig.INFERENCE_STEPS_GPU if device == "cuda" else ModelConfig.INFERENCE_STEPS_CPU,
+            "controlnet_scale": ModelConfig.CONTROLNET_SCALE,
+            "guidance_scale": ModelConfig.GUIDANCE_SCALE,
+            "random_seed": ModelConfig.RANDOM_SEED,
+            "ip_adapter_scale": ModelConfig.IP_ADAPTER_SCALE if use_ip_adapter else None
+        }
+        save_debug_info(run_dir, "07_generation_params", generation_params_info, "json")
         
         logger.info(f"[Job {job_id}] 开始AI生成 ({'IP-Adapter + ControlNet' if use_ip_adapter else 'ControlNet'}, GPU优化加速)...")
         
@@ -210,23 +336,65 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
                 
                 output_images = pipe(**generation_params).images
         
-        # 数据清洗：检查并修复NaN值
+        # 10. 数据清洗：检查并修复NaN值
         raw_image_np = output_images[0]
         if np.any(np.isnan(raw_image_np)):
             logger.warning(f"[Job {job_id}] 检测到NaN值，正在进行修复...")
             # 将NaN替换为0.5（中性灰色），避免产生黑点
             raw_image_np = np.nan_to_num(raw_image_np, nan=0.5)
 
-        # 将清洗后的numpy数组转换为PIL Image
+        # 11. 将清洗后的numpy数组转换为PIL Image
         final_image_np = (raw_image_np * 255).round().astype(np.uint8)
         final_image = Image.fromarray(final_image_np)
 
-        final_image.save(os.path.join(run_dir, "final_map.png"))
+        final_image.save(os.path.join(run_dir, "08_final_map.png"))
         
         final_array = np.array(final_image)
         logger.info(f"[Job {job_id}] GPU优化生成完成！像素值范围: {final_array.min()} - {final_array.max()}")
 
-        # GPU内存清理
+        # 12. 生成处理流程对比图
+        create_process_comparison(semantic_image, control_image_canny, final_image, run_dir, original_screenshot)
+        
+        # 13. 保存详细的生成日志
+        generation_log = f"""
+Web UI生成完成报告
+==================
+任务ID: {job_id}
+时间戳: {timestamp}
+坐标区域: {len(coordinates)}个坐标点
+边界框: {bbox_details['bbox_str']}
+OSM数据统计: {stats}
+使用模式: {'IP-Adapter + ControlNet' if use_ip_adapter else 'ControlNet'}
+设备: {device}
+数据类型: {dtype}
+推理步数: {ModelConfig.INFERENCE_STEPS_GPU if device == "cuda" else ModelConfig.INFERENCE_STEPS_CPU}
+ControlNet缩放: {ModelConfig.CONTROLNET_SCALE}
+引导缩放: {ModelConfig.GUIDANCE_SCALE}
+随机种子: {ModelConfig.RANDOM_SEED}
+最终图像尺寸: {final_image.size}
+像素值范围: {final_array.min()} - {final_array.max()}
+生成时间: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+        save_debug_info(run_dir, "10_generation_log", generation_log, "text")
+        
+        # 14. 保存任务摘要
+        task_summary = {
+            "job_id": job_id,
+            "timestamp": timestamp,
+            "status": "completed",
+            "coordinates_count": len(coordinates),
+            "bbox": bbox_details['bbox_str'],
+            "osm_stats": stats,
+            "generation_mode": "IP-Adapter + ControlNet" if use_ip_adapter else "ControlNet",
+            "device": str(device),
+            "inference_steps": ModelConfig.INFERENCE_STEPS_GPU if device == "cuda" else ModelConfig.INFERENCE_STEPS_CPU,
+            "final_image_size": final_image.size,
+            "pixel_range": {"min": int(final_array.min()), "max": int(final_array.max())},
+            "debug_directory": run_dir
+        }
+        save_debug_info(run_dir, "11_task_summary", task_summary, "json")
+
+        # 15. GPU内存清理
         if device == "cuda":
             torch.cuda.empty_cache()
 
@@ -234,18 +402,57 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate]):
         final_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-        logger.info(f"[Job {job_id}] 任务完成。")
+        logger.info(f"[Job {job_id}] 任务完成。完整调试信息已保存到: {run_dir}")
         JOBS[job_id] = {
             "status": "complete",
             "result": {
                 "image_base64": img_str,
-                "bounds": [[bbox_details["min_lat"], bbox_details["min_lng"]], [bbox_details["max_lat"], bbox_details["max_lng"]]]
+                "bounds": [[bbox_details["min_lat"], bbox_details["min_lng"]], [bbox_details["max_lat"], bbox_details["max_lng"]]],
+                "debug_info": {
+                    "job_id": job_id,
+                    "debug_directory": run_dir,
+                    "generation_mode": "IP-Adapter + ControlNet" if use_ip_adapter else "ControlNet",
+                    "osm_stats": stats
+                }
             }}
     except Exception as e:
         logger.error(f"[Job {job_id}] 任务失败: {e}", exc_info=True)
-        JOBS[job_id] = {"status": "failed", "error": str(e)}
+        
+        # 保存错误信息到调试目录
+        error_info = {
+            "error": str(e),
+            "job_id": job_id,
+            "timestamp": timestamp,
+            "error_type": type(e).__name__,
+            "debug_directory": run_dir
+        }
+        save_debug_info(run_dir, "error_log", error_info, "json")
+        
+        # 保存错误详情文本
+        error_details = f"""
+任务执行错误报告
+================
+任务ID: {job_id}
+时间戳: {timestamp}
+错误类型: {type(e).__name__}
+错误信息: {str(e)}
+调试目录: {run_dir}
+发生时间: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+"""
+        save_debug_info(run_dir, "error_details", error_details, "text")
+        
+        JOBS[job_id] = {
+            "status": "failed", 
+            "error": str(e),
+            "debug_info": {
+                "job_id": job_id,
+                "debug_directory": run_dir,
+                "error_type": type(e).__name__
+            }
+        }
+        
         # 出错时也清理GPU内存
-        if device == "cuda":
+        if 'device' in locals() and device == "cuda":
             torch.cuda.empty_cache()
 
 # --- API Endpoints ---
@@ -257,7 +464,7 @@ async def read_index():
 def start_generation(area: AreaSelection, background_tasks: BackgroundTasks):
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing"}
-    background_tasks.add_task(run_generation_task, job_id, area.coordinates)
+    background_tasks.add_task(run_generation_task, job_id, area.coordinates, area.screenshot_base64)
     return {"job_id": job_id}
 
 @app.get("/api/job_status/{job_id}")
