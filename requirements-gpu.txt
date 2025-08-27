@@ -1,0 +1,40 @@
+# AI-TourMap-Generator GPU版本依赖
+# 支持NVIDIA GPU CUDA加速
+
+# Core web framework
+fastapi
+uvicorn
+
+# Basic dependencies with version constraints
+requests
+Pillow
+numpy<2.0.0  # 兼容性约束，避免NumPy 2.x问题
+shapely
+opencv-python-headless
+
+# AI/ML dependencies with GPU support
+# PyTorch with CUDA 11.8 support (most compatible)
+--index-url https://download.pytorch.org/whl/cu118
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Diffusers and related AI models
+diffusers[torch]>=0.21.0
+transformers>=4.30.0
+accelerate>=0.20.0
+
+# ControlNet and IP-Adapter
+controlnet-aux
+ip-adapter
+
+# GPU optimization libraries (optional)
+# xformers  # 暂时注释掉，避免triton依赖问题
+
+# Note: 
+# - This installs PyTorch with CUDA 11.8 support
+# - Requires NVIDIA GPU with CUDA-compatible drivers
+# - NumPy version locked to <2.0.0 for compatibility
+# - For other CUDA versions, change the index-url:
+#   CUDA 12.1: https://download.pytorch.org/whl/cu121
+#   CPU only:  https://download.pytorch.org/whl/cpu

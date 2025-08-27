@@ -1,13 +1,28 @@
+# AI-TourMap-Generator 基础依赖
+# 默认CPU版本，如需GPU加速请使用 requirements-gpu.txt
+
+# Core web framework
 fastapi
 uvicorn
+
+# Basic dependencies
 requests
 Pillow
 numpy
 shapely
-torch
-diffusers[torch]
-transformers
-accelerate
 opencv-python-headless
+
+# AI/ML dependencies - 默认CPU版本
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+diffusers[torch]>=0.21.0
+transformers>=4.30.0
+accelerate>=0.20.0
 controlnet-aux
 ip-adapter
+
+# 安装说明:
+# CPU版本: pip install -r requirements.txt
+# GPU版本: pip install -r requirements-gpu.txt
+# 手动GPU安装: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

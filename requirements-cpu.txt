@@ -1,0 +1,33 @@
+# AI-TourMap-Generator CPU版本依赖
+# 仅支持CPU运行，无GPU加速
+
+# Core web framework
+fastapi
+uvicorn
+
+# Basic dependencies
+requests
+Pillow
+numpy
+shapely
+opencv-python-headless
+
+# AI/ML dependencies - CPU only
+--index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Diffusers and related AI models
+diffusers[torch]>=0.21.0
+transformers>=4.30.0
+accelerate>=0.20.0
+
+# ControlNet and IP-Adapter
+controlnet-aux
+ip-adapter
+
+# Note: 
+# - This installs CPU-only PyTorch
+# - No GPU acceleration available
+# - For GPU support, use requirements-gpu.txt instead
