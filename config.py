@@ -44,15 +44,13 @@ class TianDiTuConfig:
     DELAY_BETWEEN_REQUESTS = 0.1   # 请求间隔(秒)
 
 # === 颜色映射 ===
+# === 颜色映射 ===
+# 简化版本：只保留道路和水面
 COLOR_MAP = {
-    "building": "#FF5733", 
-    "highway": "#C70039", 
-    "natural=water": "#33A8FF",
-    "waterway": "#33A8FF", 
-    "landuse=forest": "#2ECC71", 
-    "leisure=park": "#27AE60",
-    "barrier": "#9B59B6", 
-    "default": "#FDFEFE"
+    "highway": "#FFFFFF",        # 道路 - 白色
+    "natural=water": "#0066FF",  # 水面 - 蓝色
+    "waterway": "#0066FF",       # 水道 - 蓝色
+    "default": "#000000"         # 背景 - 黑色
 }
 
 # === AI模型配置 ===

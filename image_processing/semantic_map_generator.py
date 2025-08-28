@@ -98,7 +98,7 @@ class SemanticMapGenerator:
     
     def _get_way_color(self, way: Dict[str, Any]) -> str:
         """
-        根据way的标签确定颜色
+        根据way的标签确定颜色 - 简化版本，只处理道路和水面
         
         Args:
             way: way数据
@@ -108,15 +108,17 @@ class SemanticMapGenerator:
         """
         tags = way.get('tags', {})
         
-        for key, hex_color in self.color_map.items():
-            if '=' in key:
-                # 处理 key=value 格式的标签
-                tag_key, tag_val = key.split('=', 1)
-                if tag_key in tags and tags[tag_key] == tag_val:
-                    return hex_color
-            else:
-                # 处理只有key的标签
-                if key in tags:
-                    return hex_color
+        # 优先检查道路
+        if 'highway' in tags:
+            return self.color_map.get("highway", self.color_map["default"])
         
+        # 检查水面
+        if 'natural' in tags and tags['natural'] == 'water':
+            return self.color_map.get("natural=water", self.color_map["default"])
+        
+        # 检查水道
+        if 'waterway' in tags:
+            return self.color_map.get("waterway", self.color_map["default"])
+        
+        # 默认背景色（对于不匹配的元素）
         return self.color_map["default"]

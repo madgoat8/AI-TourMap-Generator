@@ -16,7 +16,7 @@ class OSMClient:
     
     def build_query(self, bbox_str: str) -> str:
         """
-        构建Overpass查询语句
+        构建Overpass查询语句 - 简化版本，只查询道路和水面
         
         Args:
             bbox_str: 边界框字符串，格式为 "min_lat,min_lng,max_lat,max_lng"
@@ -26,13 +26,9 @@ class OSMClient:
         """
         query = f'''[out:json][timeout:25];
         (
-          way["building"]({bbox_str}); 
           way["highway"]({bbox_str}); 
           way["natural"="water"]({bbox_str});
           way["waterway"]({bbox_str}); 
-          way["landuse"="forest"]({bbox_str}); 
-          way["leisure"="park"]({bbox_str});
-          way["barrier"]({bbox_str});
         );
         out body;>;out skel qt;'''
         return query
@@ -73,7 +69,7 @@ class OSMClient:
     
     def get_statistics(self, osm_data: Dict[str, Any]) -> Dict[str, int]:
         """
-        获取OSM数据统计信息
+        获取OSM数据统计信息 - 简化版本，只统计道路和水面
         
         Args:
             osm_data: OSM数据字典
@@ -87,13 +83,9 @@ class OSMClient:
         stats = {
             'total_elements': len(elements),
             'total_ways': len(ways),
-            'buildings': len([w for w in ways if 'building' in w.get('tags', {})]),
             'highways': len([w for w in ways if 'highway' in w.get('tags', {})]),
             'water_bodies': len([w for w in ways if 'natural' in w.get('tags', {}) and w['tags']['natural'] == 'water']),
-            'waterways': len([w for w in ways if 'waterway' in w.get('tags', {})]),
-            'forests': len([w for w in ways if 'landuse' in w.get('tags', {}) and w['tags']['landuse'] == 'forest']),
-            'parks': len([w for w in ways if 'leisure' in w.get('tags', {}) and w['tags']['leisure'] == 'park']),
-            'barriers': len([w for w in ways if 'barrier' in w.get('tags', {})])
+            'waterways': len([w for w in ways if 'waterway' in w.get('tags', {})])
         }
         
         return stats
