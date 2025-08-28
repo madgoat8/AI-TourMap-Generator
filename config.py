@@ -16,6 +16,33 @@ OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8003
 
+# === 天地图API配置 ===
+class TianDiTuConfig:
+    # 天地图API密钥 (需要在天地图官网申请)
+    API_KEY = "1cfee73d1040758556475252ea603c28"
+    
+    # 瓦片服务URL模板 (使用WMTS标准格式)
+    SATELLITE_URL = "https://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={api_key}"
+    ANNOTATION_URL = "https://t{s}.tianditu.gov.cn/cia_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cia&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={api_key}"
+    
+    # 备用URL格式 (DataServer格式)
+    SATELLITE_URL_BACKUP = "http://t{s}.tianditu.gov.cn/DataServer?T=img_w&x={x}&y={y}&l={z}&tk={api_key}"
+    ANNOTATION_URL_BACKUP = "http://t{s}.tianditu.gov.cn/DataServer?T=cia_w&x={x}&y={y}&l={z}&tk={api_key}"
+    
+    # 服务器列表 (0-7)
+    SERVERS = ["0", "1", "2", "3", "4", "5", "6", "7"]
+    
+    # 下载配置
+    MAX_ZOOM_LEVEL = 18  # 最大缩放级别
+    MIN_ZOOM_LEVEL = 14   # 最小缩放级别
+    TILE_SIZE = 256      # 瓦片大小
+    MAX_RETRIES = 3      # 最大重试次数
+    TIMEOUT = 10         # 请求超时时间(秒)
+    
+    # 并发配置
+    MAX_CONCURRENT_DOWNLOADS = 10  # 最大并发下载数
+    DELAY_BETWEEN_REQUESTS = 0.1   # 请求间隔(秒)
+
 # === 颜色映射 ===
 COLOR_MAP = {
     "building": "#FF5733", 

@@ -29,6 +29,7 @@ from utils import GeoCoordinate, get_bounding_box_details
 from data import OSMClient
 from image_processing import SemanticMapGenerator, CannyProcessor
 from models import ModelLoader
+from satellite.tianditu_downloader import download_tianditu_satellite
 
 # 设置环境和目录
 setup_environment()
@@ -213,33 +214,52 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screensho
         }
         save_debug_info(run_dir, "01_coordinates", coords_info, "json")
         
-        # 2. 获取边界框详情
+        # 2.5. 下载天地图卫星图像
+        logger.info(f"[Job {job_id}] 开始下载天地图卫星图像...")
+        try:
+            # 转换坐标格式
+            coordinate_pairs = [(c.lat, c.lng) for c in coordinates]
+            
+            # 下载卫星图像 - 使用asyncio.run来运行异步函数
+            import asyncio
+            satellite_image_path = asyncio.run(download_tianditu_satellite(
+                coordinates=coordinate_pairs,
+                output_dir=DEBUG_DIR,
+                task_id=f"{timestamp}_{job_id[:8]}",
+                zoom=18,  # 使用合理的缩放级别
+                include_annotation=False
+            ))
+            logger.info(f"[Job {job_id}] 天地图卫星图像下载完成: {satellite_image_path}")
+        except Exception as e:
+            logger.warning(f"[Job {job_id}] 天地图卫星图像下载失败: {e}")
+        
+        # 3. 获取边界框详情
         bbox_details = get_bounding_box_details(coordinates)
         save_debug_info(run_dir, "02_bbox_info", bbox_details, "json")
         logger.info(f"[Job {job_id}] 边界框: {bbox_details['bbox_str']}")
         
-        # 3. 获取OSM数据
+        # 4. 获取OSM数据
         logger.info(f"[Job {job_id}] 获取OSM数据...")
         osm_data = osm_client.fetch_data(bbox_details["bbox_str"])
         
-        # 4. 打印并保存数据统计
+        # 5. 打印并保存数据统计
         stats = osm_client.get_statistics(osm_data)
         save_debug_info(run_dir, "03_osm_stats", stats, "json")
         logger.info(f"[Job {job_id}] OSM数据统计: {stats}")
         
-        # 5. 生成语义地图
+        # 6. 生成语义地图
         logger.info(f"[Job {job_id}] 生成语义地图...")
         semantic_image = semantic_generator.create_semantic_map(
             osm_data, bbox_details, os.path.join(run_dir, "04_semantic_map.png")
         )
         
-        # 6. Canny边缘检测
+        # 7. Canny边缘检测
         logger.info(f"[Job {job_id}] 进行Canny边缘检测...")
         control_image_canny = canny_processor.process_semantic_map(
             semantic_image, os.path.join(run_dir, "05_control_canny.png")
         )
         
-        # 7. 加载固定的风格参考图
+        # 8. 加载固定的风格参考图
         logger.info(f"[Job {job_id}] 加载风格参考图 demo1.png...")
         style_image = None
         use_ip_adapter = False
@@ -260,7 +280,7 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screensho
             logger.warning(f"[Job {job_id}] 加载风格图片失败: {e}，使用基础模式")
             use_ip_adapter = False
 
-        # 8. 根据IP-Adapter可用性调整提示词 - 使用配置中的提示词
+        # 9. 根据IP-Adapter可用性调整提示词 - 使用配置中的提示词
         if use_ip_adapter:
             prompt = PromptConfig.PROMPT_WITH_IP_ADAPTER
             pipe.set_ip_adapter_scale(ModelConfig.IP_ADAPTER_SCALE)
@@ -272,7 +292,7 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screensho
         # 使用配置中的负面提示词
         negative_prompt = PromptConfig.NEGATIVE_PROMPT
         
-        # 9. 保存生成参数
+        # 10. 保存生成参数
         generation_params_info = {
             "prompt": prompt,
             "negative_prompt": negative_prompt,
@@ -336,14 +356,14 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screensho
                 
                 output_images = pipe(**generation_params).images
         
-        # 10. 数据清洗：检查并修复NaN值
+        # 11. 数据清洗：检查并修复NaN值
         raw_image_np = output_images[0]
         if np.any(np.isnan(raw_image_np)):
             logger.warning(f"[Job {job_id}] 检测到NaN值，正在进行修复...")
             # 将NaN替换为0.5（中性灰色），避免产生黑点
             raw_image_np = np.nan_to_num(raw_image_np, nan=0.5)
 
-        # 11. 将清洗后的numpy数组转换为PIL Image
+        # 12. 将清洗后的numpy数组转换为PIL Image
         final_image_np = (raw_image_np * 255).round().astype(np.uint8)
         final_image = Image.fromarray(final_image_np)
 
@@ -352,10 +372,10 @@ def run_generation_task(job_id: str, coordinates: List[GeoCoordinate], screensho
         final_array = np.array(final_image)
         logger.info(f"[Job {job_id}] GPU优化生成完成！像素值范围: {final_array.min()} - {final_array.max()}")
 
-        # 12. 生成处理流程对比图
+        # 13. 生成处理流程对比图
         create_process_comparison(semantic_image, control_image_canny, final_image, run_dir, original_screenshot)
         
-        # 13. 保存详细的生成日志
+        # 14. 保存详细的生成日志
         generation_log = f"""
 Web UI生成完成报告
 ==================
@@ -377,7 +397,7 @@ ControlNet缩放: {ModelConfig.CONTROLNET_SCALE}
 """
         save_debug_info(run_dir, "10_generation_log", generation_log, "text")
         
-        # 14. 保存任务摘要
+        # 15. 保存任务摘要
         task_summary = {
             "job_id": job_id,
             "timestamp": timestamp,
@@ -390,11 +410,12 @@ ControlNet缩放: {ModelConfig.CONTROLNET_SCALE}
             "inference_steps": ModelConfig.INFERENCE_STEPS_GPU if device == "cuda" else ModelConfig.INFERENCE_STEPS_CPU,
             "final_image_size": final_image.size,
             "pixel_range": {"min": int(final_array.min()), "max": int(final_array.max())},
-            "debug_directory": run_dir
+            "debug_directory": run_dir,
+            "satellite_image_downloaded": True  # 新增字段标记卫星图像下载状态
         }
         save_debug_info(run_dir, "11_task_summary", task_summary, "json")
 
-        # 15. GPU内存清理
+        # 16. GPU内存清理
         if device == "cuda":
             torch.cuda.empty_cache()
 
