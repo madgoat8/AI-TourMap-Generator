@@ -11,6 +11,7 @@ from PIL import Image
 from typing import Tuple, List
 import random
 import time
+import io
 from config import TianDiTuConfig
 
 class TianDiTuDownloader:
@@ -33,7 +34,7 @@ class TianDiTuDownloader:
         # 设置日志
         self.logger = logging.getLogger(__name__)
         
-    def deg2num(self, lat_deg: float, lon_deg: float, zoom: int) -> Tuple[int, int]:
+    def deg2num(self, lat_deg: float, lon_deg: float, zoom: int, as_float: bool = False) -> Tuple[float, float]:
         """
         将经纬度转换为瓦片坐标
         
@@ -41,9 +42,10 @@ class TianDiTuDownloader:
             lat_deg: 纬度
             lon_deg: 经度
             zoom: 缩放级别
+            as_float: 是否返回浮点数坐标（用于精确裁剪）
             
         Returns:
-            (x, y): 瓦片坐标
+            (x, y): 瓦片坐标，整数或浮点数
         """
         # 验证输入范围
         if not (-90 <= lat_deg <= 90):
@@ -58,20 +60,30 @@ class TianDiTuDownloader:
         
         # 计算X坐标 (经度)
         x = (lon_deg + 180.0) / 360.0 * n
-        x_int = int(x)
         
         # 计算Y坐标 (纬度) - 使用Web墨卡托投影
         y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
-        y_int = int(y)
         
-        # 确保坐标在有效范围内
-        max_tile = int(n) - 1
-        x_int = max(0, min(max_tile, x_int))
-        y_int = max(0, min(max_tile, y_int))
-        
-        self.logger.debug(f"坐标转换: ({lat_deg:.6f}, {lon_deg:.6f}) -> 瓦片({x_int}, {y_int}) at zoom {zoom}")
-        
-        return (x_int, y_int)
+        if as_float:
+            # 返回精确的浮点数坐标
+            # 确保坐标在有效范围内
+            max_tile = n - 1
+            x = max(0.0, min(max_tile, x))
+            y = max(0.0, min(max_tile, y))
+            self.logger.debug(f"坐标转换(浮点): ({lat_deg:.6f}, {lon_deg:.6f}) -> 瓦片({x:.6f}, {y:.6f}) at zoom {zoom}")
+            return (x, y)
+        else:
+            # 返回整数瓦片坐标
+            x_int = int(x)
+            y_int = int(y)
+            
+            # 确保坐标在有效范围内
+            max_tile = int(n) - 1
+            x_int = max(0, min(max_tile, x_int))
+            y_int = max(0, min(max_tile, y_int))
+            
+            self.logger.debug(f"坐标转换(整数): ({lat_deg:.6f}, {lon_deg:.6f}) -> 瓦片({x_int}, {y_int}) at zoom {zoom}")
+            return (x_int, y_int)
     
     def num2deg(self, x: int, y: int, zoom: int) -> Tuple[float, float]:
         """
@@ -112,9 +124,9 @@ class TianDiTuDownloader:
         
         # 转换边界框的四个角点到瓦片坐标
         # 西北角
-        x_min, y_min = self.deg2num(north, west, zoom)
+        x_min, y_min = self.deg2num(north, west, zoom, as_float=False)
         # 东南角  
-        x_max, y_max = self.deg2num(south, east, zoom)
+        x_max, y_max = self.deg2num(south, east, zoom, as_float=False)
         
         self.logger.debug(f"瓦片坐标范围: x({x_min}-{x_max}), y({y_min}-{y_max})")
         
@@ -404,6 +416,7 @@ class TianDiTuDownloader:
             裁剪后的图像
         """
         if not tiles:
+            self.logger.warning("没有瓦片信息，无法进行裁剪")
             return image
         
         # 计算瓦片范围
@@ -412,26 +425,53 @@ class TianDiTuDownloader:
         min_x, max_x = min(x_coords), max(x_coords)
         min_y, max_y = min(y_coords), max(y_coords)
         
-        # 计算目标边界框在图像中的像素坐标
-        target_x_min, target_y_max = self.deg2num(north, west, zoom)
-        target_x_max, target_y_min = self.deg2num(south, east, zoom)
+        self.logger.info(f"瓦片范围: x({min_x}-{max_x}), y({min_y}-{max_y})")
+        self.logger.info(f"目标边界框: 北={north:.6f}, 南={south:.6f}, 东={east:.6f}, 西={west:.6f}")
         
-        # 转换为相对于拼接图像的像素坐标
-        pixel_x_min = (target_x_min - min_x) * self.tile_size
-        pixel_y_min = (target_y_min - min_y) * self.tile_size
-        pixel_x_max = (target_x_max - min_x + 1) * self.tile_size
-        pixel_y_max = (target_y_max - min_y + 1) * self.tile_size
+        # 使用浮点数坐标计算精确的边界框位置
+        # 西北角 (north, west)
+        nw_x, nw_y = self.deg2num(north, west, zoom, as_float=True)
+        # 东南角 (south, east)  
+        se_x, se_y = self.deg2num(south, east, zoom, as_float=True)
         
-        # 确保坐标在图像范围内
-        pixel_x_min = max(0, pixel_x_min)
-        pixel_y_min = max(0, pixel_y_min)
-        pixel_x_max = min(image.width, pixel_x_max)
-        pixel_y_max = min(image.height, pixel_y_max)
+        self.logger.debug(f"精确瓦片坐标: 西北角({nw_x:.6f}, {nw_y:.6f}), 东南角({se_x:.6f}, {se_y:.6f})")
         
-        # 裁剪图像
-        if pixel_x_max > pixel_x_min and pixel_y_max > pixel_y_min:
-            return image.crop((pixel_x_min, pixel_y_min, pixel_x_max, pixel_y_max))
-        else:
+        # 转换为相对于拼接图像的精确像素坐标
+        # 注意：Y坐标在瓦片系统中是从北到南递增的
+        pixel_x_min = (nw_x - min_x) * self.tile_size
+        pixel_y_min = (nw_y - min_y) * self.tile_size  # 北边界对应较小的Y值
+        pixel_x_max = (se_x - min_x) * self.tile_size
+        pixel_y_max = (se_y - min_y) * self.tile_size  # 南边界对应较大的Y值
+        
+        self.logger.debug(f"计算的像素坐标: x({pixel_x_min:.2f}-{pixel_x_max:.2f}), y({pixel_y_min:.2f}-{pixel_y_max:.2f})")
+        
+        # 确保坐标顺序正确（左上角到右下角）
+        if pixel_x_min > pixel_x_max:
+            pixel_x_min, pixel_x_max = pixel_x_max, pixel_x_min
+        if pixel_y_min > pixel_y_max:
+            pixel_y_min, pixel_y_max = pixel_y_max, pixel_y_min
+            
+        # 转换为整数像素坐标并确保在图像范围内
+        crop_x_min = max(0, int(round(pixel_x_min)))
+        crop_y_min = max(0, int(round(pixel_y_min)))
+        crop_x_max = min(image.width, int(round(pixel_x_max)))
+        crop_y_max = min(image.height, int(round(pixel_y_max)))
+        
+        self.logger.info(f"最终裁剪坐标: ({crop_x_min}, {crop_y_min}, {crop_x_max}, {crop_y_max})")
+        self.logger.info(f"原图像尺寸: {image.size}, 裁剪后尺寸: {crop_x_max - crop_x_min}x{crop_y_max - crop_y_min}")
+        
+        # 验证裁剪区域有效性
+        if crop_x_max <= crop_x_min or crop_y_max <= crop_y_min:
+            self.logger.error(f"无效的裁剪区域: ({crop_x_min}, {crop_y_min}, {crop_x_max}, {crop_y_max})")
+            return image
+        
+        # 执行裁剪
+        try:
+            cropped_image = image.crop((crop_x_min, crop_y_min, crop_x_max, crop_y_max))
+            self.logger.info(f"图像裁剪成功: 从 {image.size} 裁剪到 {cropped_image.size}")
+            return cropped_image
+        except Exception as e:
+            self.logger.error(f"图像裁剪失败: {e}")
             return image
     
     async def download_satellite_image(self, north: float, south: float, east: float, west: float, 
@@ -499,8 +539,6 @@ class TianDiTuDownloader:
         
         return final_image
 
-# 导入必要的模块
-import io
 
 # 便捷函数
 async def download_tianditu_satellite(coordinates: List[Tuple[float, float]], 
@@ -543,7 +581,7 @@ async def download_tianditu_satellite(coordinates: List[Tuple[float, float]],
     
     # 创建下载器
     downloader = TianDiTuDownloader()
-    logger.info(f"使用API密钥: {downloader.api_key[:10]}..." if downloader.api_key else "未设置API密钥")
+    logger.info(f"使用API密钥: {downloader.api_key[:10]}...{downloader.api_key[-4:]}" if downloader.api_key else "未设置API密钥")
     
     # 设置输出路径
     output_path = os.path.join(output_dir, task_id, "satellite_image.jpg")
