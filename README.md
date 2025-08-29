@@ -51,6 +51,28 @@ graph TD
     S --> T[更新手绘图显示];
     P -- 不需要 --> U[流程结束];
     T --> U;
+    
+    style A fill:#e1f5fe
+    style B fill:#e1f5fe
+    style C fill:#e1f5fe
+    style D fill:#e1f5fe
+    style E fill:#f3e5f5
+    style F fill:#f3e5f5
+    style G fill:#f3e5f5
+    style H fill:#f3e5f5
+    style I fill:#f3e5f5
+    style J fill:#f3e5f5
+    style K fill:#e8f5e8
+    style L fill:#e8f5e8
+    style M fill:#e8f5e8
+    style N fill:#ffebee
+    style O fill:#e8f5e8
+    style P fill:#fff3e0
+    style Q fill:#fff3e0
+    style R fill:#fff3e0
+    style S fill:#fff3e0
+    style T fill:#fff3e0
+    style U fill:#e0f2f1
 ```
 
 ### 关键优化点
